@@ -1,91 +1,62 @@
-import os
+import streamlit as st
 import yfinance as yf
 import pandas as pd
-from flask import Flask, render_template_string
 
-app = Flask(__name__)
+# Configuration de la page pour Mobile
+st.set_page_config(page_title="Stock Vision 2026", layout="centered")
 
-# CONFIGURATION DE VOS CIBLES
-ACTIONS_CIBLES = {
+st.title("🚀 Stock Vision 2026")
+
+# 1. Analyse de la Peur (VIX)
+vix_data = yf.Ticker("^VIX").history(period="1d")
+vix = vix_data['Close'].iloc[-1]
+st.metric("Indice de Volatilité (VIX)", f"{vix:.2f}", help="Sous 20 = Calme / Dessus 25 = Peur")
+
+# 2. Vos Cibles (+50% Objectif)
+tickers = {
     "NVDA": {"target": 275, "stop": 162},
     "HBM":  {"target": 18,  "stop": 10.10},
     "CRWD": {"target": 470, "stop": 285}
 }
-BUDGET_MENSUEL = 1000
 
-def get_stock_data():
-    results = []
-    for ticker, info in ACTIONS_CIBLES.items():
-        data = yf.Ticker(ticker).history(period="20d")
-        if data.empty: continue
+st.subheader("Analyses Hebdomadaires")
+
+for t, info in tickers.items():
+    stock = yf.Ticker(t)
+    hist = stock.history(period="20d")
+    
+    if not hist.empty:
+        price = hist['Close'].iloc[-1]
         
-        current_price = data['Close'].iloc[-1]
-        
-        # Calcul du RSI (14 jours)
-        delta = data['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
+        # Calcul du RSI simple
+        delta = hist['Close'].diff()
+        up = delta.clip(lower=0)
+        down = -1 * delta.clip(upper=0)
+        ema_up = up.ewm(com=13, adjust=False).mean()
+        ema_down = down.ewm(com=13, adjust=False).mean()
+        rs = ema_up / ema_down
         rsi = 100 - (100 / (1 + rs.iloc[-1]))
         
-        # Calcul de la stratégie
-        potentiel = ((info['target'] - current_price) / current_price) * 100
-        quantite = BUDGET_MENSUEL // current_price
+        potentiel = ((info['target'] - price) / price) * 100
         
-        status = "NEUTRE"
-        color = "#3498db"
-        if rsi > 70: 
-            status = "SURACHETÉ (ATTENDRE)"
-            color = "#e74c3c"
-        elif rsi < 35: 
-            status = "SURVENDU (ACHAT !)"
-            color = "#2ecc71"
+        # Affichage sous forme de "Card"
+        with st.container():
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                st.markdown(f"### **{t}** : `{round(price, 2)}$`")
+            with col2:
+                if rsi > 70:
+                    st.error(f"RSI: {round(rsi,1)}")
+                elif rsi < 35:
+                    st.success(f"RSI: {round(rsi,1)}")
+                else:
+                    st.info(f"RSI: {round(rsi,1)}")
+            
+            st.write(f"🎯 Objectif: **{info['target']}$** ({round(potentiel,1)}%) | 🛑 Stop: {info['stop']}$")
+            
+            # Calculateur d'achat (1000$)
+            qty = 1000 // price
+            st.caption(f"Avec 1000$, vous pouvez acheter **{int(qty)}** actions.")
+            st.divider()
 
-        results.append({
-            "ticker": ticker, "price": round(current_price, 2),
-            "rsi": round(rsi, 1), "potentiel": round(potentiel, 1),
-            "target": info['target'], "stop": info['stop'],
-            "qty": int(quantite), "status": status, "color": color
-        })
-    return results
-
-@app.route('/')
-def index():
-    stocks = get_stock_data()
-    # Template HTML minimaliste optimisé pour mobile
-    html = '''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body { font-family: sans-serif; background: #121212; color: white; padding: 10px; }
-            .card { background: #1e1e1e; border-radius: 10px; padding: 15px; margin-bottom: 15px; border-left: 5px solid; }
-            .ticker { font-size: 20px; font-weight: bold; }
-            .price { font-size: 24px; color: #f1c40f; }
-            .badge { padding: 5px 10px; border-radius: 5px; font-size: 12px; font-weight: bold; }
-        </style>
-    </head>
-    <body>
-        <h2>🚀 Stock Vision 2026</h2>
-        <p>Budget: {{budget}}$ | Date: 19 Mars 2026</p>
-        {% for s in stocks %}
-        <div class="card" style="border-left-color: {{s.color}}">
-            <div style="display:flex; justify-content:space-between;">
-                <span class="ticker">{{s.ticker}}</span>
-                <span class="badge" style="background:{{s.color}}">{{s.status}}</span>
-            </div>
-            <div class="price">{{s.price}}$</div>
-            <p>RSI: <b>{{s.rsi}}</b> | Potentiel: <b>+{{s.potentiel}}%</b></p>
-            <p>Objectif: {{s.target}}$ | Stop-Loss: {{s.stop}}$</p>
-            <hr style="border:0.5px solid #333">
-            <p style="color:#aaa">Avec 1000$, achetez : <b>{{s.qty}} actions</b></p>
-        </div>
-        {% endfor %}
-    </body>
-    </html>
-    '''
-    return render_template_string(html, stocks=stocks, budget=BUDGET_MENSUEL)
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080)
+st.button("Actualiser les données")
