@@ -2,82 +2,115 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-# Configuration Mobile First
+# Configuration Mobile First & Style
 st.set_page_config(page_title="Stock Vision Pro", layout="centered")
+st.markdown("""
+    <style>
+    .reportview-container .main .block-container{ padding-top: 1rem; }
+    .stMetric { background-color: #f0f2f6; padding: 10px; border-radius: 10px; }
+    </style>
+    """, unsafe_allow_html=True)
 
 st.title("🚀 Mon Analyste Privé : Vision 2026")
 
-# 1. Barre d'état Marché (VIX)
-vix_data = yf.Ticker("^VIX").history(period="1d")
-vix = vix_data['Close'].iloc[-1]
-st.metric("Indice de Volatilité (VIX)", f"{vix:.2f}", 
-          delta="Calme" if vix < 20 else "Nerveux", delta_color="inverse")
-
-# 2. Base de données des analyses (Dictionnaire centralisé)
-analyses = {
+# --- 1. BASE DE DONNÉES GLOBALE (Centralisée) ---
+# Format : { "Ticker": { "region": "US/EU/ASIA", "desc": "...", "stop": 00, ... analyses } }
+db = {
     "NVDA": {
-        "target": 275, "stop": 162, "entry": "175$ - 180$",
-        "geo": "Tensions US/Chine intégrées ; forte demande souveraine au Moyen-Orient.",
+        "region": "États-Unis",
+        "desc": "Concepteur leader mondial de processeurs graphiques (GPU) et de puces pour l'IA.",
+        "stop": 162, "entry": "175$ - 180$",
+        "geo": "Tensions US/Chine intégrées ; demande souveraine au Moyen-Orient.",
         "eco": "Pression sur les taux compensée par la croissance massive du secteur IA.",
         "fin": "BPA attendu +65% ; Cash-flow record permettant des rachats d'actions.",
-        "strat": "Domination des puces Blackwell et transition vers les services logiciels."
+        "strat": "Domination Blackwell et transition vers les services logiciels."
     },
     "HBM": {
-        "target": 18, "stop": 10.10, "entry": "11.20$",
-        "geo": "Sécurisation des chaînes d'approvisionnement en métaux critiques (Cuivre).",
+        "region": "États-Unis",
+        "desc": "Compagnie minière diversifiée produisant du cuivre, du zinc et des métaux précieux.",
+        "stop": 10.10, "entry": "11.20$",
+        "geo": "Sécurisation des chaînes d'approvisionnement en métaux critiques.",
         "eco": "Inflation des matières premières tirée par la transition énergétique.",
         "fin": "Dette nette en chute libre ; levier opérationnel maximal sur le prix du cuivre.",
-        "strat": "Ouverture de nouvelles mines à forte teneur ; cible d'acquisition (M&A)."
+        "strat": "Ouverture de nouvelles mines ; cible d'acquisition (M&A)."
     },
-    "CRWD": {
-        "target": 470, "stop": 285, "entry": "305$ (Attendre repli)",
-        "geo": "Augmentation des cyber-attaques étatiques mondiales.",
-        "eco": "Budget IT sanctuarisé pour la cybersécurité malgré le contexte macro.",
-        "fin": "Marge brute >75% ; revenus récurrents (ARR) en accélération constante.",
-        "strat": "Plateforme Falcon unifiée et intégration native de l'IA générative."
+    "ASML": {
+        "region": "Europe",
+        "desc": "Fournisseur néerlandais unique au monde de machines de lithographie EUV pour semi-conducteurs.",
+        "stop": 850, "entry": "900€ - 920€",
+        "geo": "Souveraineté technologique européenne ; contrôles d'exportation vers la Chine.",
+        "eco": "Bénéficie des plans d'investissement massifs (Chips Act).",
+        "fin": "Marge brute >50% ; carnet de commandes plein jusqu'en 2027.",
+        "strat": "Monopole technologique sur la lithographie la plus avancée."
+    },
+    "LVMH": {
+        "region": "Europe",
+        "desc": "Leader mondial du luxe, possédant des marques comme Louis Vuitton, Dior, Moët & Chandon.",
+        "stop": 710, "entry": "740€ - 760€",
+        "geo": "Dépendance à la consommation chinoise et américaine.",
+        "eco": "Pouvoir de prix (pricing power) exceptionnel face à l'inflation.",
+        "fin": "Marge opérationnelle >25% ; flux de trésorerie disponible massif.",
+        "strat": "Stratégie de désirabilité et d'élévation de gamme."
+    },
+    "TSM": {
+        "region": "Asie",
+        "desc": "Première fonderie de semi-conducteurs au monde, basés à Taïwan (produit pour Apple, NVDA).",
+        "stop": 140, "entry": "150$ - 155$",
+        "geo": "Risque géopolitique majeur (Taïwan/Chine) ; diversification géographique (USA, Japon).",
+        "eco": "Indispensable à l'économie numérique mondiale.",
+        "fin": "Marge brute proche de 60% ; investissements massifs (CAPEX).",
+        "strat": "Maîtrise inégalée des gravures les plus fines (3nm, 2nm)."
+    },
+    "7203.T": { # Toyota
+        "region": "Asie",
+        "desc": "Constructeur automobile japonais, leader mondial en volume et pionnier de l'hybride.",
+        "stop": 3100, "entry": "3300 JPY",
+        "geo": "Concurrence accrue des VE chinois ; impact des taux de change (Yen).",
+        "eco": "Ralentissement potentiel de la demande automobile mondiale.",
+        "fin": "Bilan solide ; profits records portés par les véhicules hybrides.",
+        "strat": "Pari sur une approche multi-énergies (hybride, hydrogène, électrique)."
     }
 }
 
-st.markdown("---")
-
-# 3. Boucle de génération des cartes d'actions
-for t, info in analyses.items():
-    stock = yf.Ticker(t)
-    hist = stock.history(period="20d")
+# --- 2. BARRE LATÉRALE (Filtres Interactifs) ---
+with st.sidebar:
+    st.header("Paramètres de Screening")
     
-    if not hist.empty:
-        price = hist['Close'].iloc[-1]
-        
-        # Calcul du RSI technique
-        delta = hist['Close'].diff()
-        up = delta.clip(lower=0).rolling(14).mean()
-        down = -1 * delta.clip(upper=0).rolling(14).mean()
-        rsi = 100 - (100 / (1 + (up / down).iloc[-1]))
-        
-        # Header de la carte
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.subheader(f"{t} : {round(price, 2)}$")
-        with col2:
-            if rsi > 70: st.error(f"RSI: {round(rsi,1)}")
-            elif rsi < 35: st.success(f"RSI: {round(rsi,1)}")
-            else: st.info(f"RSI: {round(rsi,1)}")
+    # Sélecteur de Région
+    region_filter = st.multiselect(
+        "Sélectionner les marchés :",
+        options=["États-Unis", "Europe", "Asie"],
+        default=["États-Unis", "Europe", "Asie"]
+    )
+    
+    st.markdown("---")
+    
+    # Sélecteur d'Objectif Dynamique
+    goal_percentages = [10, 20, 30, 50, 100]
+    selected_goal = st.select_slider(
+        "Définir l'objectif de gain (%) :",
+        options=goal_percentages,
+        value=50, # Valeur par défaut
+        help="L'application recalculera la cible et le potentiel par rapport au prix actuel."
+    )
+    goal_multiplier = 1 + (selected_goal / 100)
 
-        # Infos Clés (Visible immédiatement)
-        st.write(f"🎯 **Cible : {info['target']}$** | 🛑 **Stop : {info['stop']}$**")
-        st.write(f"📥 **Entrée idéale : {info['entry']}**")
-        
-        # Menu déroulant pour les détails d'analyse
-        with st.expander("🔍 Voir l'analyse complète"):
-            st.markdown(f"🌍 **Géopolitique :** {info['geo']}")
-            st.markdown(f"📈 **Économie :** {info['eco']}")
-            st.markdown(f"💰 **Finances :** {info['fin']}")
-            st.markdown(f"💡 **Stratégie :** {info['strat']}")
-            
-            # Calculateur auto
-            qty = 1000 // price
-            st.warning(f"Allocation 1000$ : Achetez **{int(qty)}** actions.")
+    st.markdown("---")
+    # Analyse de la Peur (VIX)
+    vix_data = yf.Ticker("^VIX").history(period="1d")
+    vix = vix_data['Close'].iloc[-1]
+    st.metric("Indice de Peur (VIX)", f"{vix:.2f}", 
+              delta="Calme" if vix < 20 else "Nerveux", delta_color="inverse")
 
-        st.divider()
+# --- 3. AFFICHAGE DES RÉSULTATS ---
+st.markdown("---")
+# Filtrage de la base de données
+filtered_tickers = {t: info for t, info in db.items() if info['region'] in region_filter}
 
-st.caption("Données mises à jour en temps réel via Yahoo Finance API.")
+if not filtered_tickers:
+    st.warning("Aucune action ne correspond aux filtres sélectionnés.")
+else:
+    for t, info in filtered_tickers.items():
+        stock = yf.Ticker(t)
+        # Gestion du symbole pour le Yen (Toyota)
+        currency = "$" if t != "720
