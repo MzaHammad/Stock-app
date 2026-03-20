@@ -1,99 +1,93 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
+import yfinance as yf
+from ta.momentum import RSIIndicator
 
-st.set_page_config(page_title="Scanner Full Dynamique", layout="centered")
+st.set_page_config(layout="wide")
+st.title("🚀 Scanner Complet US – Toutes les Actions (lent mais complet)")
 
-# --- INTERFACE DE CONTRÔLE ---
-st.title("🤖 Scanner Boursier Dynamique")
+# -----------------------------
+# 1️⃣ Récupérer tous les tickers US (S&P500 + Nasdaq)
+# -----------------------------
+@st.cache_data
+def get_us_tickers():
+    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+    sp500 = pd.read_html(url)[0]["Symbol"].tolist()
 
-with st.sidebar:
-    st.header("Configuration")
-    
-    # Barre de recherche libre
-    search_ticker = st.text_input("Recherche libre (ex: AAPL, LVMH.PA, 7203.T)", "").upper()
-    
-    market = st.selectbox("Marchés suggérés", ["US", "Europe", "Asie"])
-    goal = st.select_slider("Objectif de gain %", options=[10, 20, 30, 50, 100], value=50)
-    
-    # Listes par défaut si la recherche est vide
-    if not search_ticker:
-        if market == "US": tickers = ["NVDA", "AAPL", "MSFT", "TSLA", "CRWD"]
-        elif market == "Europe": tickers = ["ASML.AS", "MC.PA", "OR.PA", "SAP.DE"]
-        else: tickers = ["2330.TW", "7203.T", "9984.T"]
-        selected_ticker = st.selectbox("Actions suggérées", tickers)
+    # Nasdaq top 100 (pour exemple, tu peux l’élargir)
+    nasdaq_url = "https://en.wikipedia.org/wiki/NASDAQ-100"
+    nasdaq = pd.read_html(nasdaq_url)[3]["Ticker"].tolist()
+
+    tickers = list(set(sp500 + nasdaq))  # Union sans doublon
+    return tickers
+
+tickers = get_us_tickers()
+st.write(f"🔎 Nombre total de tickers à scanner : {len(tickers)}")
+
+# -----------------------------
+# 2️⃣ Fonctions pour récupérer prix et RSI
+# -----------------------------
+def get_stock_data(ticker):
+    try:
+        data = yf.download(ticker, period="3mo", interval="1d", progress=False)
+        if data.empty:
+            return None
+        price = data["Close"].iloc[-1]
+        rsi = RSIIndicator(close=data["Close"], window=14).rsi().iloc[-1]
+        return price, rsi
+    except:
+        return None
+
+def rsi_label(rsi):
+    if rsi < 35:
+        return "🔥 OPPORTUNITÉ"
+    elif rsi > 70:
+        return "⚠️ ATTENDRE CORRECTION"
     else:
-        selected_ticker = search_ticker
+        return "Neutre"
 
-st.button("🔄 Actualiser les données en direct")
+# -----------------------------
+# 3️⃣ Scanner tous les tickers (lent)
+# -----------------------------
+results = []
+progress_text = "Scanning all tickers..."
+my_bar = st.progress(0, text=progress_text)
 
-# --- MOTEUR DE DONNÉES (CORRIGÉ) ---
-# On ne cache que les données brutes (dictionnaires/dataframes), pas l'objet Ticker
-@st.cache_data(ttl=3600)
-def get_clean_data(ticker_symbol):
-    s = yf.Ticker(ticker_symbol)
-    i = s.info
-    h = s.history(period="1mo")
-    n = s.news[:3]
-    return i, h, n
+for i, ticker in enumerate(tickers):
+    result = get_stock_data(ticker)
+    if result:
+        price, rsi = result
+        target = price * 1.5  # +50% objectif
+        upside = ((target - price)/price)*100
+        shares = int(1000/price)
 
-try:
-    info, hist, news = get_clean_data(selected_ticker)
+        results.append({
+            "Ticker": ticker,
+            "Prix ($)": round(price,2),
+            "RSI": round(rsi,1),
+            "Signal": rsi_label(rsi),
+            "Target ($)": round(target,2),
+            "Potentiel (%)": round(upside,1),
+            "Nb actions (1000$)": shares
+        })
 
-    if not hist.empty:
-        current_price = hist['Close'].iloc[-1]
-        currency = info.get('currency', '$')
-        
-        # 1. RSI Dynamique
-        delta = hist['Close'].diff()
-        up = delta.clip(lower=0).rolling(14).mean()
-        down = -1 * delta.clip(upper=0).rolling(14).mean()
-        rs = up / down.replace(0, 0.001)
-        rsi = 100 - (100 / (1 + rs.iloc[-1]))
+    my_bar.progress((i+1)/len(tickers), text=progress_text)
 
-        # 2. Métriques Flash
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Prix Actuel", f"{round(current_price, 2)} {currency}")
-        col2.metric("RSI (14j)", f"{round(rsi, 1)}")
-        col3.metric("Cible", f"{round(current_price * (1+goal/100), 2)} {currency}")
+df = pd.DataFrame(results)
+df = df.sort_values(by="Potentiel (%)", ascending=False)
 
-        # 3. Identité
-        st.subheader(f"📊 {info.get('longName', selected_ticker)}")
-        st.caption(f"Secteur : {info.get('sector', 'N/A')} | Industrie : {info.get('industry', 'N/A')}")
-        st.write(info.get('longBusinessSummary', 'Description non disponible.'))
+# -----------------------------
+# 4️⃣ Affichage
+# -----------------------------
+st.subheader("📊 Actions filtrées par potentiel + RSI")
+st.dataframe(df, use_container_width=True)
+st.caption("🔄 Rafraîchis la page pour re-scanner toutes les actions")
 
-        # 4. Analyse Financière Live
-        with st.expander("💰 Santé Financière (Chiffres réels)"):
-            f1, f2 = st.columns(2)
-            margin = info.get('operatingMargins', 0)
-            growth = info.get('revenueGrowth', 0)
-            f1.write(f"**Marge Opérationnelle :** {round(margin*100, 2) if margin else 'N/A'}%")
-            f1.write(f"**Croissance CA :** {round(growth*100, 2) if growth else 'N/A'}%")
-            f2.write(f"**PER (Ratio cours/bénéfice) :** {info.get('trailingPE', 'N/A')}")
-            f2.write(f"**EPS (Bénéfice/Action) :** {info.get('trailingEps', 'N/A')} {currency}")
-
-        # 5. News & Économie
-        with st.expander("🌍 Actualités Récentes"):
-            if news:
-                for n in news:
-                    st.markdown(f"🔹 **[{n['title']}]({n['link']})**")
-                    st.caption(f"Source: {n['publisher']}")
-            else:
-                st.write("Aucune news récente trouvée.")
-
-        # 6. Stratégie de Protection
-        with st.expander("🛡️ Point d'Entrée & Sécurité"):
-            low_30j = hist['Low'].min()
-            st.write(f"Prix d'entrée suggéré (-3% du cours) : **{round(current_price * 0.97, 2)} {currency}**")
-            st.error(f"Stop-Loss conseillé (Support 30j) : **{round(low_30j, 2)} {currency}**")
-
-        # 7. Calculateur Mobile
-        st.divider()
-        budget = st.number_input("Budget d'investissement ($/€/¥)", value=1000)
-        st.success(f"Nombre d'actions à acheter : **{int(budget // current_price)}**")
-
-    else:
-        st.error("Données historiques introuvables. Vérifiez le Ticker (ex: 'MC.PA' pour LVMH).")
-
-except Exception as e:
-    st.warning(f"Le ticker '{selected_ticker}' est invalide ou Yahoo Finance ne répond pas.")
+# -----------------------------
+# 5️⃣ Metrics synthèse
+# -----------------------------
+st.subheader("📈 Synthèse rapide")
+col1, col2, col3 = st.columns(3)
+col1.metric("Actions scannées", len(tickers))
+col2.metric("Opportunités détectées", len(df))
+col3.metric("Top Pick", df.iloc[0]["Ticker"] if not df.empty else "N/A")
